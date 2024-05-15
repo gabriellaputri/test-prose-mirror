@@ -22,6 +22,7 @@
 </template>
 
 <script>
+import { ref } from "vue";
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import {
@@ -51,40 +52,21 @@ export default {
       docId,
       ydoc
     );
-
-    return {
-      docId,
-      ydoc,
-      provider,
-    };
-  },
-  data() {
-    return {
-      docVersions: [],
-      editor: null,
-      colors: [
-        { light: "#ecd44433", dark: "#ecd444" },
-        { light: "#ee635233", dark: "#ee6352" },
-        { light: "#6eeb8333", dark: "#6eeb83" },
-      ],
-      firstChangeByLocalUser: false,
-      isConnected: true,
-    };
-  },
-  created() {
-    this.getVersions();
-  },
-  mounted() {
-    const permanentUserData = new Y.PermanentUserData(this.ydoc);
-    this.ydoc.gc = false;
-
-    const yXmlFragment = this.ydoc.get("prosemirror", Y.XmlFragment);
-
+    const permanentUserData = new Y.PermanentUserData(ydoc);
+    const yXmlFragment = ydoc.get("prosemirror", Y.XmlFragment);
+    const colors = [
+      { light: "#ecd44433", dark: "#ecd444" },
+      { light: "#ee635233", dark: "#ee6352" },
+      { light: "#6eeb8333", dark: "#6eeb83" },
+    ];
     const state = EditorState.create({
       schema,
       plugins: [
-        ySyncPlugin(yXmlFragment, { permanentUserData, colors: this.colors }),
-        yCursorPlugin(this.provider.awareness),
+        ySyncPlugin(yXmlFragment, {
+          permanentUserData,
+          colors,
+        }),
+        yCursorPlugin(provider.awareness),
         yUndoPlugin(),
         keymap({
           "Mod-z": undo,
@@ -93,27 +75,34 @@ export default {
         }),
       ].concat(exampleSetup({ schema })),
     });
+    let view;
 
-    this.editor = new EditorView(this.$refs.editor, { state });
-    // this.editor.dispatchTransaction = (transaction) => {
-    //   const newState = this.editor.state.apply(transaction);
-    //   this.editor.updateState(newState);
+    return {
+      docId,
+      ydoc,
+      provider,
+      permanentUserData,
+      state,
+      view,
+    };
+  },
+  data() {
+    return {
+      docVersions: [],
+      firstChangeByLocalUser: false,
+      isConnected: true,
+    };
+  },
+  created() {
+    this.getVersions();
+  },
+  mounted() {
+    this.ydoc.gc = false;
 
-    //   console.log({ transaction });
-    //   console.log("transaction.meta:\n", transaction.meta);
-
-    //   if (Object.keys(transaction.meta).length === 0) {
-    //     if (!this.firstChangeByLocalUser && transaction.updated !== 0) {
-    //       console.log("firstChangeByLocalUser");
-    //       this.firstChangeByLocalUser = true;
-    //       permanentUserData.setUserMapping(
-    //         this.ydoc,
-    //         this.ydoc.clientID,
-    //         "Alice"
-    //       );
-    //     }
-    //   }
-    // };
+    this.view = new EditorView(this.$refs.editor, {
+      state: this.state,
+      dispatchTransaction: this.dispatchTransaction.bind(this),
+    });
   },
   methods: {
     getVersions() {
@@ -141,6 +130,30 @@ export default {
       }
       this.isConnected = !this.isConnected;
     },
+    dispatchTransaction(transaction) {
+      if (!this.view) {
+        return;
+      }
+      console.log("view:", this.view.state);
+
+      const newState = this.state.apply(transaction);
+      this.view.updateState(newState);
+
+      console.log({ transaction });
+      console.log("transaction.meta:\n", transaction.meta);
+
+      if (Object.keys(transaction.meta).length === 0) {
+        if (!this.firstChangeByLocalUser && transaction.updated !== 0) {
+          console.log("firstChangeByLocalUser");
+          this.firstChangeByLocalUser = true;
+          this.permanentUserData.setUserMapping(
+            this.ydoc,
+            this.ydoc.clientID,
+            "Alice"
+          );
+        }
+      }
+    },
     renderVersion(currSnapshot, prevSnapshot) {
       console.log("currSnapshot:", currSnapshot);
       console.log("prevSnapshot:", prevSnapshot);
@@ -151,8 +164,8 @@ export default {
         let convertedPrevSnapshot =
           prevSnapshot != null ? Base64.toUint8Array(prevSnapshot) : null;
 
-        this.editor.dispatch(
-          this.editor.state.tr.setMeta(ySyncPluginKey, {
+        this.view.dispatch(
+          this.view.state.tr.setMeta(ySyncPluginKey, {
             snapshot: Y.decodeSnapshot(convertedCurrSnapshot),
             prevSnapshot:
               convertedPrevSnapshot != null
