@@ -3,13 +3,12 @@
   <v-btn @click="toggleConnection" class="mr-2">{{
     isConnected ? "Disconnect" : "Connect"
   }}</v-btn>
-  <div>{{ firstChangeByLocalUser }}</div>
   <div>Version List</div>
   <v-list v-if="docVersions.length">
     <v-list-item
       v-for="(version, i) in docVersions"
       :key="version.id"
-      :title="version.version_timestamp"
+      :title="version.created_at"
       :subtitle="`${i} of ${docVersions.length}`"
       @click="
         renderVersion(
@@ -35,7 +34,7 @@ import {
   redo,
 } from "y-prosemirror";
 import { EditorView } from "prosemirror-view";
-import { EditorState, Plugin } from "prosemirror-state";
+import { EditorState } from "prosemirror-state";
 import { exampleSetup } from "prosemirror-example-setup";
 // import { schema } from "prosemirror-schema-basic";
 import { schema } from "./schema";
@@ -46,16 +45,36 @@ import { Base64 } from "js-base64";
 export default {
   name: "Editor",
   setup() {
-    const docId = "cXxJ1SHIQL87pbR21dcr5";
+    const docId = "k2XC32-BnR7253gJMq9IM";
     const ydoc = new Y.Doc();
-    ydoc.gc = false;
     const provider = new WebsocketProvider(
       "wss://logcarry-ywebsocket-3nuur.ondigitalocean.app/eln-note_objectives",
       docId,
       ydoc
     );
     const permanentUserData = new Y.PermanentUserData(ydoc);
-
+    const yXmlFragment = ydoc.get("prosemirror", Y.XmlFragment);
+    const colors = [
+      { light: "#ecd44433", dark: "#ecd444" },
+      { light: "#ee635233", dark: "#ee6352" },
+      { light: "#6eeb8333", dark: "#6eeb83" },
+    ];
+    const state = EditorState.create({
+      schema,
+      plugins: [
+        ySyncPlugin(yXmlFragment, {
+          permanentUserData,
+          colors,
+        }),
+        yCursorPlugin(provider.awareness),
+        yUndoPlugin(),
+        keymap({
+          "Mod-z": undo,
+          "Mod-y": redo,
+          "Mod-Shift-z": redo,
+        }),
+      ].concat(exampleSetup({ schema })),
+    });
     let view;
 
     return {
@@ -63,6 +82,7 @@ export default {
       ydoc,
       provider,
       permanentUserData,
+      state,
       view,
     };
   },
@@ -77,54 +97,12 @@ export default {
     this.getVersions();
   },
   mounted() {
-    const yXmlFragment = this.ydoc.get("prosemirror", Y.XmlFragment);
-    const colors = [
-      { light: "#ecd44433", dark: "#ecd444" },
-      { light: "#ee635233", dark: "#ee6352" },
-      { light: "#6eeb8333", dark: "#6eeb83" },
-    ];
-    const state = EditorState.create({
-      schema,
-      plugins: [
-        ySyncPlugin(yXmlFragment, {
-          permanentUserData: this.permanentUserData,
-          colors,
-        }),
-        yCursorPlugin(this.provider.awareness),
-        yUndoPlugin(),
-        keymap({
-          "Mod-z": undo,
-          "Mod-y": redo,
-          "Mod-Shift-z": redo,
-        }),
-        new Plugin({
-          filterTransaction: (transaction, editorState) => {
-            console.log("[Plugin]-filterTransaction runs");
-            console.log({ transaction });
-            if (Object.keys(transaction.meta).length === 0) {
-              if (!this.firstChangeByLocalUser && transaction.updated !== 0) {
-                console.log("firstChangeByLocalUser");
-                this.firstChangeByLocalUser = true;
-                this.permanentUserData.setUserMapping(
-                  this.ydoc,
-                  this.ydoc.clientID,
-                  "Alice"
-                );
-              }
-            }
-            return true;
-          },
-        }),
-      ].concat(exampleSetup({ schema })),
-    });
+    this.ydoc.gc = false;
+
     this.view = new EditorView(this.$refs.editor, {
-      state: state,
+      state: this.state,
+      dispatchTransaction: this.dispatchTransaction.bind(this),
     });
-  },
-  // please adjust this and ensure it is disconnected,
-  // else the auto-versioning won't work, and the server might run out of connection
-  beforeUnmount() {
-    this.provider.disconnect();
   },
   methods: {
     getVersions() {
@@ -151,6 +129,30 @@ export default {
         console.log("connected");
       }
       this.isConnected = !this.isConnected;
+    },
+    dispatchTransaction(transaction) {
+      if (!this.view) {
+        return;
+      }
+      console.log("view:", this.view.state);
+
+      const newState = this.view.state.apply(transaction);
+      this.view.updateState(newState);
+
+      console.log({ transaction });
+      console.log("transaction.meta:\n", transaction.meta);
+
+      if (Object.keys(transaction.meta).length === 0) {
+        if (!this.firstChangeByLocalUser && transaction.updated !== 0) {
+          console.log("firstChangeByLocalUser");
+          this.firstChangeByLocalUser = true;
+          this.permanentUserData.setUserMapping(
+            this.ydoc,
+            this.ydoc.clientID,
+            "Alice"
+          );
+        }
+      }
     },
     renderVersion(currSnapshot, prevSnapshot) {
       console.log("currSnapshot:", currSnapshot);
